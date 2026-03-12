@@ -30,8 +30,14 @@ Required dependencies:
 Hugging Face Real vs LLM (variety) Dataset:
 `https://huggingface.co/datasets/Rajarshi-Roy-research/Defactify_Image_Dataset`
 
+Hugging Face Real vs AI Dataset:
+`https://huggingface.co/datasets/Hemg/AI-Generated-vs-Real-Images-Datasets`
+
 Kaggle AI vs Real Images:
 `https://www.kaggle.com/datasets/birdy654/cifake-real-and-ai-generated-synthetic-images/data`
+
+IEE Real vs text-to-image dataset:
+`https://ieee-dataport.org/documents/deepguarddb-real-and-text-image-synthetic-images-dataset`
 
 ## How to preprocess the data
 
