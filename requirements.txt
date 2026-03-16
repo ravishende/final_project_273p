@@ -4,3 +4,4 @@ kagglehub
 torch
 torchvision
 pillow
+wandb
