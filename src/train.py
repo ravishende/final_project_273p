@@ -168,8 +168,9 @@ def main():
 
     model = build_model(cfg).to(device)
 
-    # 7000 "real"s and 35000 "fake"s in test set result in class imbalance
+    # 7000 "real"s and 35000 "fake"s in training set result in class imbalance
     # so we use a weighted loss function
+    # can change this depends on training set distribution
     class_counts = torch.tensor([7000, 35000], dtype=torch.float32, device=device) 
     class_weights = class_counts.sum() / (len(class_counts) * class_counts)
     criterion = nn.CrossEntropyLoss(
@@ -206,8 +207,6 @@ def main():
             "val/recall": val_metrics["recall"],
             "val/f1": val_metrics["f1"],
             "val/auc": val_metrics["auc"],
-            "lr/backbone": optimizer.param_groups[0]["lr"],
-            "lr/head": optimizer.param_groups[1]["lr"],
         })
 
         print(

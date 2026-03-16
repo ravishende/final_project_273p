@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 @dataclass
 class Config:
+
     # dataset / dataloader
     data_root: str = "data"
     image_size: int = 224
@@ -21,7 +22,7 @@ class Config:
     lr: float = 1e-4
     weight_decay: float = 1e-4
 
-    # experiment tracking
+    # experiment tracking for wandb
     project: str = "ai-image-detection"
     run_name: str = "resnet18-rgb"
     save_dir: str = "checkpoints"
