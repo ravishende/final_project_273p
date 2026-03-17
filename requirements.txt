@@ -3,5 +3,6 @@ pyarrow==15.0.0
 kagglehub
 torch
 torchvision
+torchmetrics
 pillow
 wandb
