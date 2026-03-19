@@ -1,5 +1,6 @@
 import io
 import random
+import kagglehub
 from pathlib import Path
 
 import kagglehub
@@ -7,6 +8,7 @@ import torch
 import torchvision.transforms.functional as TF
 
 from PIL import Image
+from pathlib import Path
 from datasets import load_dataset
 from torch.utils.data import Dataset, DataLoader, ConcatDataset, WeightedRandomSampler
 from torchvision import transforms
@@ -52,6 +54,118 @@ class FixedBrightness:
             return img
         return TF.adjust_brightness(img, self.factor)
 
+class RajarshiDataset(Dataset):
+    def __init__(self, dataset, transform=None, return_source=False):
+        self.dataset = dataset
+        self.transform = transform
+        self.return_source = return_source
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        row = self.dataset[idx]
+        image = row["Image"]
+        label_a = row["Label_A"]   # 0 = real, 1 = fake
+
+        if self.transform is not None:
+            image = self.transform(image)
+
+        if self.return_source:
+            label_b = row["Label_B"]
+            return image, label_a, label_b
+
+        return image, label_a
+
+class HemgDataset(Dataset):
+    def __init__(self, dataset, transform=None):
+        self.dataset = dataset
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        row = self.dataset[idx]
+        image = row["image"]
+        label = row["label"]
+        label = int(1 - label) # need 1 = fake and 0 = real
+        if self.transform:
+            image = self.transform(image)
+        return image, label
+
+class CIFAKEDataset(Dataset):
+    def __init__(
+        self,
+        split="train",
+        transform=None,
+        validation_ratio=0.2,
+        seed=42,
+    ):
+        if split not in {"train", "validation", "test"}:
+            raise ValueError("split must be 'train', 'validation', or 'test'")
+        self.transform = transform
+        # get images
+        root = Path(
+            kagglehub.dataset_download(
+                "birdy654/cifake-real-and-ai-generated-synthetic-images"
+            )
+        )
+        selected_samples = None
+        if split == "test":
+            # get test
+            base_samples = self._collect_samples(root, "test")
+            selected_samples = base_samples
+        else:
+            # get train or validation
+            # there is no pre-defined validation set --> get a reproducible partition from training set
+            base_samples = self._collect_samples(root, "train")
+            selected_samples = self._split_train_validation(
+                samples=base_samples,
+                split=split,
+                validation_ratio=validation_ratio,
+                seed=seed
+            )
+        self.samples = selected_samples
+
+    def _collect_samples(self, root: Path, split="train"):
+        """collect all samples (data points) from a given split"""
+        split_dir = root / split
+        samples = []
+        for file_path in sorted(split_dir.glob("*/*.*")): #e.g. train/img0.PIL
+            label_name = file_path.parent.name.upper()
+            if label_name not in {"FAKE", "REAL"}:
+                raise ValueError("Unexpected label name: " + label_name)
+            label = 1 if label_name == "FAKE" else 0
+            samples.append((file_path, label))
+        if not samples:
+            raise ValueError(f"No image files found under: {split_dir}")
+        return samples
+
+    def _split_train_validation(self, samples, split, validation_ratio, seed):
+        """partition train into train and validation"""
+        num_samples = len(samples)
+        indices = torch.randperm(
+            num_samples,
+            generator=torch.Generator().manual_seed(seed)
+        ).tolist()
+        split_idx = int(num_samples * (1 - validation_ratio))
+        if split == "train":
+            selected_indices = indices[:split_idx]
+        else:  # validation
+            selected_indices = indices[split_idx:]
+        return [samples[i] for i in selected_indices]
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        file_path, label = self.samples[idx]
+        with Image.open(file_path) as image:
+            image = image.convert("RGB")
+            if self.transform:
+                image = self.transform(image)
+        return image, label
 
 def build_transforms(image_size: int):
     train_transform = transforms.Compose([
