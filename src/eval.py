@@ -39,7 +39,9 @@ def evaluate(model, loader, criterion, device, num_classes=2):
     all_labels = []
 
     for batch in loader:
-        if len(batch) == 3:
+        if len(batch) == 4:
+            images, labels, _, _ = batch
+        elif len(batch) == 3:
             images, labels, _ = batch
         else:
             images, labels = batch
@@ -98,57 +100,188 @@ def evaluate(model, loader, criterion, device, num_classes=2):
         "labels": all_labels,
     }
 
+# @torch.no_grad()
+# def evaluate_per_source(model, loader, criterion, device, num_classes=2, source_names=None):
+#     """
+#     This is for RajarshiDataset only, we evaluate the model and output the metrics 
+#     from each source (real, Stable Diffusion ...)
+#     """
+#     model.eval()
+
+#     per_source_preds = defaultdict(list)
+#     per_source_labels = defaultdict(list)
+#     per_source_losses = defaultdict(list)
+
+#     for images, labels_a, labels_b in loader:
+#         images = images.to(device, non_blocking=True)
+#         labels_a = labels_a.to(device, non_blocking=True)
+#         labels_b = labels_b.to(device, non_blocking=True)
+
+#         logits = model(images)
+#         loss = criterion(logits, labels_a)
+
+#         preds = logits.argmax(dim=1)
+
+#         # move to cpu for grouping
+#         preds = preds.detach().cpu()
+#         labels_a = labels_a.detach().cpu()
+#         labels_b = labels_b.detach().cpu()
+
+#         batch_size = labels_a.size(0)
+#         batch_loss = loss.item()
+
+#         for i in range(batch_size):
+#             src = int(labels_b[i].item())
+#             per_source_preds[src].append(int(preds[i].item()))
+#             per_source_labels[src].append(int(labels_a[i].item()))
+#             per_source_losses[src].append(batch_loss)
+
+#     results = {}
+
+#     for src in sorted(per_source_labels.keys()):
+#         y_true = torch.tensor(per_source_labels[src], dtype=torch.long)
+#         y_pred = torch.tensor(per_source_preds[src], dtype=torch.long)
+
+#         acc_metric = MulticlassAccuracy(num_classes=num_classes)
+#         acc = acc_metric(y_pred, y_true).item()
+
+#         avg_loss = sum(per_source_losses[src]) / len(per_source_losses[src])
+
+#         src_name = source_names[src] if source_names is not None else str(src)
+
+#         results[src_name] = {
+#             "count": len(y_true),
+#             "loss": avg_loss,
+#             "acc": acc,
+#             "error_rate": 1.0 - acc,
+#         }
+
+#     return results
+
+
+# def print_per_source_results(title, results):
+#     print(f"\n=== {title} ===")
+#     print(f"{'source':<15} {'count':>8} {'acc':>8} {'err':>8} {'loss':>10}")
+#     for source, metrics in results.items():
+#         print(
+#             f"{source:<15} "
+#             f"{metrics['count']:>8d} "
+#             f"{metrics['acc']:>8.4f} "
+#             f"{metrics['error_rate']:>8.4f} "
+#             f"{metrics['loss']:>10.4f}"
+#         )
+
+
 @torch.no_grad()
-def evaluate_per_source(model, loader, criterion, device, num_classes=2, source_names=None):
+def evaluate_per_dataset(model, loader, criterion, device, num_classes=2):
     """
-    This is for RajarshiDataset only, we evaluate the model and output the metrics 
-    from each source (real, Stable Diffusion ...)
+    loader batches:
+      images, labels, dataset_names, source_names
     """
     model.eval()
 
-    per_source_preds = defaultdict(list)
-    per_source_labels = defaultdict(list)
-    per_source_losses = defaultdict(list)
+    groups = defaultdict(lambda: {
+        "preds": [],
+        "labels": [],
+        "fake_probs": [],
+        "losses": [],
+    })
 
-    for images, labels_a, labels_b in loader:
+    for images, labels, dataset_names, source_names in loader:
         images = images.to(device, non_blocking=True)
-        labels_a = labels_a.to(device, non_blocking=True)
-        labels_b = labels_b.to(device, non_blocking=True)
+        labels = labels.to(device, non_blocking=True)
 
         logits = model(images)
-        loss = criterion(logits, labels_a)
+        loss = criterion(logits, labels)
 
+        probs = torch.softmax(logits, dim=1)
+        fake_probs = probs[:, 1]
         preds = logits.argmax(dim=1)
 
-        # move to cpu for grouping
-        preds = preds.detach().cpu()
-        labels_a = labels_a.detach().cpu()
-        labels_b = labels_b.detach().cpu()
+        preds_cpu = preds.detach().cpu()
+        labels_cpu = labels.detach().cpu()
+        fake_probs_cpu = fake_probs.detach().cpu()
 
-        batch_size = labels_a.size(0)
-        batch_loss = loss.item()
-
-        for i in range(batch_size):
-            src = int(labels_b[i].item())
-            per_source_preds[src].append(int(preds[i].item()))
-            per_source_labels[src].append(int(labels_a[i].item()))
-            per_source_losses[src].append(batch_loss)
+        for i in range(labels.size(0)):
+            dname = dataset_names[i]
+            groups[dname]["preds"].append(int(preds_cpu[i].item()))
+            groups[dname]["labels"].append(int(labels_cpu[i].item()))
+            groups[dname]["fake_probs"].append(float(fake_probs_cpu[i].item()))
+            groups[dname]["losses"].append(loss.item())
 
     results = {}
 
-    for src in sorted(per_source_labels.keys()):
-        y_true = torch.tensor(per_source_labels[src], dtype=torch.long)
-        y_pred = torch.tensor(per_source_preds[src], dtype=torch.long)
+    for dname, g in groups.items():
+        preds = torch.tensor(g["preds"], dtype=torch.long)
+        labels = torch.tensor(g["labels"], dtype=torch.long)
+        fake_probs = torch.tensor(g["fake_probs"], dtype=torch.float32)
 
-        acc_metric = MulticlassAccuracy(num_classes=num_classes)
-        acc = acc_metric(y_pred, y_true).item()
+        acc = MulticlassAccuracy(num_classes=num_classes)(preds, labels).item()
+        precision = MulticlassPrecision(num_classes=num_classes, average="macro")(preds, labels).item()
+        recall = MulticlassRecall(num_classes=num_classes, average="macro")(preds, labels).item()
+        f1 = MulticlassF1Score(num_classes=num_classes, average="macro")(preds, labels).item()
 
-        avg_loss = sum(per_source_losses[src]) / len(per_source_losses[src])
+        try:
+            auc = BinaryAUROC()(fake_probs, labels).item()
+        except ValueError:
+            auc = float("nan")
 
-        src_name = source_names[src] if source_names is not None else str(src)
+        avg_loss = sum(g["losses"]) / len(g["losses"])
 
-        results[src_name] = {
-            "count": len(y_true),
+        results[dname] = {
+            "count": len(labels),
+            "loss": avg_loss,
+            "acc": acc,
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "auc": auc,
+        }
+
+    return results
+
+@torch.no_grad()
+def evaluate_per_dataset_source(model, loader, criterion, device):
+    """
+    For aggregate dataset:
+      group by (dataset_name, source_name)
+    """
+    model.eval()
+
+    groups = defaultdict(lambda: {
+        "preds": [],
+        "labels": [],
+        "losses": [],
+    })
+
+    for images, labels, dataset_names, source_names in loader:
+        images = images.to(device, non_blocking=True)
+        labels = labels.to(device, non_blocking=True)
+
+        logits = model(images)
+        loss = criterion(logits, labels)
+        preds = logits.argmax(dim=1)
+
+        preds_cpu = preds.detach().cpu()
+        labels_cpu = labels.detach().cpu()
+
+        for i in range(labels.size(0)):
+            key = f"{dataset_names[i]}::{source_names[i]}"
+            groups[key]["preds"].append(int(preds_cpu[i].item()))
+            groups[key]["labels"].append(int(labels_cpu[i].item()))
+            groups[key]["losses"].append(loss.item())
+
+    results = {}
+
+    for key, g in groups.items():
+        preds = torch.tensor(g["preds"], dtype=torch.long)
+        labels = torch.tensor(g["labels"], dtype=torch.long)
+
+        acc = MulticlassAccuracy(num_classes=2)(preds, labels).item()
+        avg_loss = sum(g["losses"]) / len(g["losses"])
+
+        results[key] = {
+            "count": len(labels),
             "loss": avg_loss,
             "acc": acc,
             "error_rate": 1.0 - acc,
@@ -157,14 +290,27 @@ def evaluate_per_source(model, loader, criterion, device, num_classes=2, source_
     return results
 
 
-def print_per_source_results(title, results):
+def print_grouped_results(title, results):
     print(f"\n=== {title} ===")
-    print(f"{'source':<15} {'count':>8} {'acc':>8} {'err':>8} {'loss':>10}")
-    for source, metrics in results.items():
-        print(
-            f"{source:<15} "
-            f"{metrics['count']:>8d} "
-            f"{metrics['acc']:>8.4f} "
-            f"{metrics['error_rate']:>8.4f} "
-            f"{metrics['loss']:>10.4f}"
-        )
+    first = next(iter(results.values()))
+    if "auc" in first:
+        print(f"{'group':<28} {'count':>8} {'acc':>8} {'f1':>8} {'auc':>8} {'loss':>10}")
+        for k, v in results.items():
+            print(
+                f"{k:<28} "
+                f"{v['count']:>8d} "
+                f"{v['acc']:>8.4f} "
+                f"{v['f1']:>8.4f} "
+                f"{v['auc']:>8.4f} "
+                f"{v['loss']:>10.4f}"
+            )
+    else:
+        print(f"{'group':<28} {'count':>8} {'acc':>8} {'err':>8} {'loss':>10}")
+        for k, v in results.items():
+            print(
+                f"{k:<28} "
+                f"{v['count']:>8d} "
+                f"{v['acc']:>8.4f} "
+                f"{v['error_rate']:>8.4f} "
+                f"{v['loss']:>10.4f}"
+            )

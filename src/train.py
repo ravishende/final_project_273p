@@ -9,9 +9,14 @@ from dataclasses import asdict
 from torch.optim import AdamW
 
 from config import Config
-from data import build_dataloaders
-from model import ResNet18RGB, ResNet18FFT1C, ResNet18RealArtifactNet
-from eval import evaluate, evaluate_per_source, print_per_source_results
+from final_project_273p.src.data import build_aggregate_dataloaders
+from final_project_273p.src.model import ResNet18RGB, ResNet18FFT1C, ResNet18RealArtifactNet
+from eval import (
+    evaluate,
+    evaluate_per_dataset,
+    evaluate_per_dataset_source,
+    print_grouped_results,
+)
 
 def save_checkpoint(model, path: str):
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -92,6 +97,7 @@ def build_optimizer(model, cfg):
                 or "realness_norm" in name
                 or "log_alpha" in name
                 or "log_beta" in name
+                or "bias" in name
             ):
                 head_params.append(param)
             else:
@@ -114,7 +120,7 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
     total_correct = 0
     total_count = 0
 
-    for images, labels in loader:
+    for images, labels, _, _ in loader:
         images = images.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
 
@@ -150,7 +156,7 @@ def is_better(current, best, mode="max", min_delta=1e-4):
 def main():
     cfg = Config(
         model_name="real_artifact_net",
-        run_name="resnet18-real_artifact_net-final"
+        run_name="resnet18-real_artifact_net-aggregate-final"
     )
 
     set_seed(cfg.seed)
@@ -158,7 +164,7 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
-    train_loader, val_loader, test_loader = build_dataloaders(cfg)
+    train_loader, val_loader, test_loaders = build_aggregate_dataloaders(cfg)
 
     run = wandb.init(
         project=cfg.project,
@@ -168,15 +174,16 @@ def main():
 
     model = build_model(cfg).to(device)
 
-    # 7000 "real"s and 35000 "fake"s in training set result in class imbalance
+    # 7000 "real"s and 31800 "fake"s in training set result in class imbalance
     # so we use a weighted loss function
     # can change this depends on training set distribution
-    class_counts = torch.tensor([7000, 35000], dtype=torch.float32, device=device) 
-    class_weights = class_counts.sum() / (len(class_counts) * class_counts)
-    criterion = nn.CrossEntropyLoss(
-        weight=class_weights
-    )
+    # class_counts = torch.tensor([7000, 31800], dtype=torch.float32, device=device) 
+    # class_weights = class_counts.sum() / (len(class_counts) * class_counts)
+    # criterion = nn.CrossEntropyLoss(
+    #     weight=class_weights
+    # )
 
+    criterion = nn.CrossEntropyLoss()
 
     optimizer = build_optimizer(model, cfg)
 
@@ -229,6 +236,7 @@ def main():
             save_checkpoint(model, best_ckpt_path)
             run.summary[f"best_{cfg.monitor_metric}"] = best_metric
             run.summary["best_epoch"] = best_epoch
+
         else:
             epochs_without_improve += 1
 
@@ -256,67 +264,88 @@ def main():
         f"auc={best_val_metrics['auc']:.4f}"
     )
 
-    test_metrics = evaluate(
+    # grouped validation only on best checkpoint
+    val_per_dataset = evaluate_per_dataset(
         model,
-        test_loader,
+        val_loader,
         criterion,
         device,
         num_classes=cfg.num_classes,
     )
+    val_per_dataset_source = evaluate_per_dataset_source(
+        model,
+        val_loader,
+        criterion,
+        device,
+    )
+    print_grouped_results("Validation per-dataset [best checkpoint]", val_per_dataset)
+    print_grouped_results("Validation per-dataset-source [best checkpoint]", val_per_dataset_source)
+    for group_name, metrics in val_per_dataset.items():
+        wandb.log({
+            f"best_val_per_dataset/{group_name}_acc": metrics["acc"],
+            f"best_val_per_dataset/{group_name}_f1": metrics["f1"],
+            f"best_val_per_dataset/{group_name}_auc": metrics["auc"],
+            f"best_val_per_dataset/{group_name}_loss": metrics["loss"],
+            "epoch": best_epoch,
+        })
+    for group_name, metrics in val_per_dataset_source.items():
+        wandb.log({
+            f"best_val_per_dataset_source/{group_name}_acc": metrics["acc"],
+            f"best_val_per_dataset_source/{group_name}_err": metrics["error_rate"],
+            f"best_val_per_dataset_source/{group_name}_loss": metrics["loss"],
+            "epoch": best_epoch,
+        })
 
-    # source_names = {
-    #     0: "real",
-    #     1: "src_1",
-    #     2: "src_2",
-    #     3: "src_3",
-    #     4: "src_4",
-    #     5: "src_5",
-    # }
+    all_test_results = {}
 
-    # per_source_val = evaluate_per_source(
-    #     model,
-    #     val_loader,
-    #     criterion,
-    #     device,
-    #     source_names=source_names,
-    # )
-    # per_source_test = evaluate_per_source(
-    #     model,
-    #     test_loader,
-    #     criterion,
-    #     device,
-    #     source_names=source_names,
-    # )
+    for dataset_name, test_loader in test_loaders.items():
+        test_metrics = evaluate(
+            model,
+            test_loader,
+            criterion,
+            device,
+            num_classes=cfg.num_classes,
+        )
+        if dataset_name == "rajarshi":
+            test_per_dataset_source = evaluate_per_dataset_source(
+                model,
+                test_loader,
+                criterion,
+                device,
+            )
+            print_grouped_results(f"Test per-dataset-source [{dataset_name}]", test_per_dataset_source)
 
-    # print_per_source_results("Validation per-source", per_source_val)
-    # print_per_source_results("Test per-source", per_source_test)
+        all_test_results[dataset_name] = test_metrics
 
-    wandb.log({
-        "test/loss": test_metrics["loss"],
-        "test/acc": test_metrics["acc"],
-        "test/precision": test_metrics["precision"],
-        "test/recall": test_metrics["recall"],
-        "test/f1": test_metrics["f1"],
-        "test/auc": test_metrics["auc"],
-        "test/confusion_matrix": wandb.plot.confusion_matrix(
-            probs=None,
-            y_true=test_metrics["labels"].numpy(),
-            preds=test_metrics["preds"].numpy(),
-            class_names=["real", "fake"],
-        ),
-    })
+        print(
+            f"\n[{dataset_name}] "
+            f"acc={test_metrics['acc']:.4f} "
+            f"precision={test_metrics['precision']:.4f} "
+            f"recall={test_metrics['recall']:.4f} "
+            f"f1={test_metrics['f1']:.4f} "
+            f"auc={test_metrics['auc']:.4f}"
+        )
 
-    # for source, metrics in per_source_test.items():
-    #     wandb.log({
-    #         f"test_per_source/{source}_acc": metrics["acc"],
-    #         f"test_per_source/{source}_err": metrics["error_rate"],
-    #     })
+        wandb.log({
+            f"test/{dataset_name}/loss": test_metrics["loss"],
+            f"test/{dataset_name}/acc": test_metrics["acc"],
+            f"test/{dataset_name}/precision": test_metrics["precision"],
+            f"test/{dataset_name}/recall": test_metrics["recall"],
+            f"test/{dataset_name}/f1": test_metrics["f1"],
+            f"test/{dataset_name}/auc": test_metrics["auc"],
+            f"test/{dataset_name}/confusion_matrix": wandb.plot.confusion_matrix(
+                probs=None,
+                y_true=test_metrics["labels"].numpy(),
+                preds=test_metrics["preds"].numpy(),
+                class_names=["real", "fake"],
+            ),
+        })
 
-    run.summary["test_acc"] = test_metrics["acc"]
-    run.summary["test_precision"] = test_metrics["precision"]
-    run.summary["test_recall"] = test_metrics["recall"]
-    run.summary["test_f1"] = test_metrics["f1"]
-    run.summary["test_auc"] = test_metrics["auc"]
+        run.summary[f"test_{dataset_name}_acc"] = test_metrics["acc"]
+        run.summary[f"test_{dataset_name}_precision"] = test_metrics["precision"]
+        run.summary[f"test_{dataset_name}_recall"] = test_metrics["recall"]
+        run.summary[f"test_{dataset_name}_f1"] = test_metrics["f1"]
+        run.summary[f"test_{dataset_name}_auc"] = test_metrics["auc"]
 
     artifact = wandb.Artifact(name=cfg.run_name, type="model")
     artifact.add_file(best_ckpt_path)
@@ -325,12 +354,16 @@ def main():
     wandb.finish()
 
     print(f"\nBest val {cfg.monitor_metric}: {best_metric:.4f} at epoch {best_epoch}")
-    print(f"Test acc: {test_metrics['acc']:.4f}")
-    print(f"Test precision: {test_metrics['precision']:.4f}")
-    print(f"Test recall: {test_metrics['recall']:.4f}")
-    print(f"Test f1: {test_metrics['f1']:.4f}")
-    print(f"Test auc: {test_metrics['auc']:.4f}")
-
+    for dataset_name, metrics in all_test_results.items():
+        print(
+            f"[FINAL TEST] {dataset_name}: "
+            f"acc={metrics['acc']:.4f}, "
+            f"precision={metrics['precision']:.4f}, "
+            f"recall={metrics['recall']:.4f}, "
+            f"f1={metrics['f1']:.4f}, "
+            f"auc={metrics['auc']:.4f}"
+        )
+    
 
 if __name__ == "__main__":
     main()

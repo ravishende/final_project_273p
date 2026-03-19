@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torchvision.models import resnet18, ResNet18_Weights
 
-# Reference: https://arxiv.org/pdf/2503.10718 -> 4.1.2 Implementation Details
+# Reference: https://arxiv.org/pdf/2183.10718 -> 4.1.2 Implementation Details
 
 def build_resnet18_with_in_channels(in_channels: int, pretrained: bool = True) -> nn.Module:
     weights = ResNet18_Weights.DEFAULT if pretrained else None
