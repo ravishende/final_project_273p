@@ -18,12 +18,14 @@ Required dependencies:
 # Modeling
 
 ## How to train the model
+
 Go into the `src` directory
 
 1. run `train.py`
    - This will require a GPU
-     
+
 ## How to evaluate the model
+
 After running train.py, make an account with Weights & Biases. Metrics and graphs will be written there to evaluate, such as precision, recall, loss, accuracy, f1, AUC, etc...
 
 ## Expected outputs
@@ -42,6 +44,7 @@ CIFAKE: Kaggle AI vs Real Images:
 `https://www.kaggle.com/datasets/birdy654/cifake-real-and-ai-generated-synthetic-images/data`
 
 ## How to preprocess the data
+
 We created DataLoaders to iterate over the data. We updated the labels to ensure that 1 means AI-generated and 0 means real across all 3 data sets.
 
 ## How to reproduce our results
@@ -50,3 +53,5 @@ Go into the `src` directory
 
 1. run `train.py`
    - This will require a GPU
+2. See resulting graphs in the wandb report
+3. Get the results csv from wandb. Put it in the `src` directory. Rename it to `stats.csv`. Run all cells in `vis.ipynb`
