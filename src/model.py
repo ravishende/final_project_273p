@@ -149,3 +149,72 @@ class ResNet18RealArtifactNet(nn.Module):
         fake_logit = alpha * fake_score - beta * real_score + self.bias
         logits = torch.cat([-fake_logit, fake_logit], dim=1)  
         return logits
+    
+class ConvBlock(nn.Module):
+    def __init__(self, in_ch, out_ch, k=3, s=1, p=1, pool=False, dropout_p=0.0):
+        super().__init__()
+        layers = [
+            nn.Conv2d(in_ch, out_ch, kernel_size=k, stride=s, padding=p, bias=False),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True),
+        ]
+        if pool:
+            layers.append(nn.MaxPool2d(2))
+        if dropout_p > 0:
+            layers.append(nn.Dropout2d(dropout_p))
+        self.block = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.block(x)
+
+
+class BasicCNN(nn.Module):
+    def __init__(self, num_classes: int = 2, width: int = 32, dropout_p: float = 0.3):
+        super().__init__()
+
+        # Feature extractor (12 conv layers)
+        self.layer1 = ConvBlock(3, width, pool=True)
+        self.layer2 = ConvBlock(width, width, pool=True)
+
+        self.layer3 = ConvBlock(width, width * 2)
+        self.layer4 = ConvBlock(width * 2, width * 2, pool=True)
+
+        self.layer5 = ConvBlock(width * 2, width * 4)
+        self.layer6 = ConvBlock(width * 4, width * 4, pool=True)
+
+        self.layer7 = ConvBlock(width * 4, width * 8)
+        self.layer8 = ConvBlock(width * 8, width * 8, pool=True)
+
+        self.layer9  = ConvBlock(width * 8, width * 8)
+        self.layer10 = ConvBlock(width * 8, width * 8)
+
+        self.layer11 = ConvBlock(width * 8, width * 16)
+        self.layer12 = ConvBlock(width * 16, width * 16)
+
+        self.pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.flatten = nn.Flatten()
+
+        # Classifier
+        self.fc1 = nn.Linear(width * 16, num_classes)
+
+        self.relu = nn.ReLU(inplace=True)
+        self.dropout = nn.Dropout(dropout_p)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+        x = self.layer5(x)
+        x = self.layer6(x)
+        x = self.layer7(x)
+        x = self.layer8(x)
+        x = self.layer9(x)
+        x = self.layer10(x)
+        x = self.layer11(x)
+        x = self.layer12(x)
+
+        x = self.pool(x)
+        x = self.flatten(x)
+        x = self.dropout(x)
+        x = self.fc(x)
