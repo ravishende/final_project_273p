@@ -29,7 +29,9 @@ Go into the `src` directory
 After running train.py, make an account with Weights & Biases. Metrics and graphs will be written there to evaluate, such as precision, recall, loss, accuracy, f1, AUC, etc...
 
 ## Expected outputs
+
 Example Output from the following config:
+
 ```py
 cfg = Config(
         model_name="real_artifact_net",
@@ -100,6 +102,7 @@ rajarshi::src_4                  7500   0.4496   0.5504     1.6455
 
 [hemg] acc=0.9652 precision=0.9657 recall=0.9652 f1=0.9655 auc=0.9947
 ```
+
 # Datasets
 
 ## Where to download the datasets
@@ -124,4 +127,4 @@ Go into the `src` directory
 1. run `train.py`
    - This will require a GPU
 2. See resulting graphs in the wandb report
-3. Get the results csv from wandb. Put it in the `src` directory. Rename it to `stats.csv`. Run all cells in `vis.ipynb`
+3. Get the results csv from wandb. Put it in the `src` directory. Rename it to `stats.csv`. Go into the `src` directory. Run all cells in `tabulate_results.ipynb`
